@@ -6,3 +6,10 @@ deploy:
 	scp -C dist/gha gha.middlemost.com:gha
 	ssh gha.middlemost.com "sudo service gha stop && sudo mv gha /usr/local/bin/gha && sudo service gha start"
 	rm -rf dist
+
+deploy-litestream:
+	scp -C ../litestream/dist/litestream-linux-amd64.tar.gz gha.middlemost.com:
+	ssh gha.middlemost.com "tar zxf litestream-linux-amd64.tar.gz && \
+		sudo service litestream stop && \
+		sudo mv litestream /usr/local/bin/litestream && \
+		sudo service litestream start"
