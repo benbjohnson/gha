@@ -12,12 +12,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/rollbar/rollbar-go"
 )
 
 // Metrics
@@ -35,12 +37,20 @@ var (
 	})
 )
 
+// Internal stats.
+var stats struct {
+	mu            sync.Mutex
+	writeN        uint64
+	lastCreatedAt time.Time
+}
+
 func main() {
 	m := NewMain()
 	if err := m.Run(context.Background(), os.Args[1:]); err == flag.ErrHelp {
 		os.Exit(1)
 	} else if err != nil {
 		fmt.Fprintln(os.Stderr, err)
+		rollbar.Error(err)
 		os.Exit(1)
 	}
 }
@@ -65,6 +75,24 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	}
 	dsn := fs.Arg(0)
 
+	log.SetFlags(0)
+
+	// Enable rollbar if token provided.
+	if v := os.Getenv("ROLLBAR_TOKEN"); v != "" {
+		rollbar.SetToken(v)
+		rollbar.SetEnvironment("production")
+		rollbar.SetCodeVersion("v0.1.0")
+		rollbar.SetServerRoot("github.com/benbjohnson/gha")
+		log.Printf("rollbar error tracking enabled")
+		defer func() {
+			if r := recover(); r != nil {
+				rollbar.Critical(r)
+				rollbar.Wait()
+				panic(r)
+			}
+		}()
+	}
+
 	// Connect to database.
 	if err := os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
 		return err
@@ -83,7 +111,7 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 
 	// Determine max event time.
 	var startTimeStr string
-	if err := db.QueryRowContext(ctx, `SELECT MAX(created_at) FROM events;`).Scan(&startTimeStr); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT IFNULL(MAX(created_at), '') FROM events;`).Scan(&startTimeStr); err != nil {
 		return fmt.Errorf("cannot determine max event time: %w", err)
 	}
 
@@ -98,6 +126,7 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	go m.logger(ctx)
 	go m.ingestor(ctx, db, startTime.Truncate(1*time.Hour), *ingestRate)
 	// go m.querier(ctx, db, *queryRate)
 
@@ -156,6 +185,23 @@ func (m *Main) migrate(ctx context.Context, db *sql.DB) error {
 	return tx.Commit()
 }
 
+// logger is run in a separate goroutine and periodically logs event totals.
+func (m *Main) logger(ctx context.Context) {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			stats.mu.Lock()
+			log.Printf("status: t=%s writes=%d", stats.lastCreatedAt.Format(time.RFC3339), stats.writeN)
+			stats.mu.Unlock()
+		}
+	}
+}
+
 // ingestor is run in a separate goroutine and ingests data from GitHub Archive.
 func (m *Main) ingestor(ctx context.Context, db *sql.DB, startTime time.Time, rate int) {
 	ticker := time.NewTicker(time.Second / time.Duration(rate))
@@ -178,8 +224,6 @@ func (m *Main) ingestor(ctx context.Context, db *sql.DB, startTime time.Time, ra
 
 // ingest writes a single event to the database.
 func (m *Main) ingest(ctx context.Context, db *sql.DB, event Event) error {
-	log.Printf("ingest: %d @ %s", event.ID, event.CreatedAt.Format(time.RFC3339))
-
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -213,6 +257,11 @@ func (m *Main) ingest(ctx context.Context, db *sql.DB, event Event) error {
 	}
 
 	writeTxTotal.Inc()
+
+	stats.mu.Lock()
+	stats.writeN++
+	stats.lastCreatedAt = event.CreatedAt
+	stats.mu.Unlock()
 
 	return nil
 }
