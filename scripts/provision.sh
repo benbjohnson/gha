@@ -70,7 +70,7 @@ Description=Litestream
 
 [Service]
 Restart=on-failure
-ExecStart=/usr/local/bin/litestream
+ExecStart=/usr/local/bin/litestream replicate -v
 
 [Install]
 WantedBy=multi-user.target
