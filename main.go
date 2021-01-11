@@ -121,6 +121,9 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 		if startTime, err = time.ParseInLocation(time.RFC3339, startTimeStr, time.UTC); err != nil {
 			return fmt.Errorf("cannot parse start time: %w", err)
 		}
+		if _, err := db.ExecContext(ctx, `DELETE FROM events WHERE created_at >= ?`, startTimeStr); err != nil {
+			return fmt.Errorf("cannot remove events above start time: %w", err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -187,7 +190,7 @@ func (m *Main) migrate(ctx context.Context, db *sql.DB) error {
 
 // logger is run in a separate goroutine and periodically logs event totals.
 func (m *Main) logger(ctx context.Context) {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
 
 	for {
