@@ -121,7 +121,10 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 		if startTime, err = time.ParseInLocation(time.RFC3339, startTimeStr, time.UTC); err != nil {
 			return fmt.Errorf("cannot parse start time: %w", err)
 		}
-		if _, err := db.ExecContext(ctx, `DELETE FROM events WHERE created_at >= ?`, startTimeStr); err != nil {
+		startTime = startTime.Truncate(1 * time.Hour)
+
+		log.Printf("removing events after: %s", startTime.Format(time.RFC3339))
+		if _, err := db.ExecContext(ctx, `DELETE FROM events WHERE created_at >= ?`, startTime.Format(time.RFC3339)); err != nil {
 			return fmt.Errorf("cannot remove events above start time: %w", err)
 		}
 	}
@@ -130,7 +133,7 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	defer cancel()
 
 	go m.logger(ctx)
-	go m.ingestor(ctx, db, startTime.Truncate(1*time.Hour), *ingestRate)
+	go m.ingestor(ctx, db, startTime, *ingestRate)
 	// go m.querier(ctx, db, *queryRate)
 
 	fmt.Println("Metrics available via http://localhost:7070/metrics")
