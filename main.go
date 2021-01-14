@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -8,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
@@ -122,11 +124,6 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 			return fmt.Errorf("cannot parse start time: %w", err)
 		}
 		startTime = startTime.Truncate(1 * time.Hour)
-
-		log.Printf("removing events after: %s", startTime.Format(time.RFC3339))
-		if _, err := db.ExecContext(ctx, `DELETE FROM events WHERE created_at >= ?`, startTime.Format(time.RFC3339)); err != nil {
-			return fmt.Errorf("cannot remove events above start time: %w", err)
-		}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -193,7 +190,7 @@ func (m *Main) migrate(ctx context.Context, db *sql.DB) error {
 
 // logger is run in a separate goroutine and periodically logs event totals.
 func (m *Main) logger(ctx context.Context) {
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -213,7 +210,7 @@ func (m *Main) ingestor(ctx context.Context, db *sql.DB, startTime time.Time, ra
 	ticker := time.NewTicker(time.Second / time.Duration(rate))
 	defer ticker.Stop()
 
-	ch := newEventStream(startTime)
+	ch := newEventStream(db, startTime)
 	for {
 		select {
 		case <-ctx.Done():
@@ -312,11 +309,11 @@ type Repo struct {
 	URL  string `json:"url"`
 }
 
-func newEventStream(startTime time.Time) <-chan Event {
+func newEventStream(db *sql.DB, startTime time.Time) <-chan Event {
 	ch := make(chan Event, 1024)
 	go func() {
 		for t := startTime; ; {
-			if err := processEventStreamAt(ch, t); err != nil {
+			if err := processEventStreamAt(db, ch, t); err != nil {
 				log.Printf("cannot process event stream for %s, waiting 1m to retry: %s", t, err)
 				time.Sleep(1 * time.Minute)
 				continue
@@ -328,16 +325,26 @@ func newEventStream(startTime time.Time) <-chan Event {
 }
 
 // processEventStreamAt processes events for a single hour and sends them to ch.
-func processEventStreamAt(ch chan Event, t time.Time) error {
-	filename := fmt.Sprintf("%04d-%02d-%02d-%d.json.gz", t.Year(), t.Month(), t.Day(), t.Hour())
-	rawurl := "https://data.gharchive.org/" + filename
+func processEventStreamAt(db *sql.DB, ch chan Event, t time.Time) error {
+	// Clear out any events after this time first.
+	if _, err := db.Exec(`DELETE FROM events WHERE created_at >= ?`, t.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("cannot remove events above start time: %w", err)
+	}
 
 	// Fetch data over HTTP.
+	filename := fmt.Sprintf("%04d-%02d-%02d-%d.json.gz", t.Year(), t.Month(), t.Day(), t.Hour())
+	rawurl := "https://data.gharchive.org/" + filename
 	resp, err := http.Get(rawurl)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+
+	buf, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("cannot read body: %w", err)
+	} else if resp.Body.Close(); err != nil {
+		return err
+	}
 
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("file not found: %s", rawurl)
@@ -346,7 +353,7 @@ func processEventStreamAt(ch chan Event, t time.Time) error {
 	}
 
 	// Decompress stream.
-	gr, err := gzip.NewReader(resp.Body)
+	gr, err := gzip.NewReader(bytes.NewReader(buf))
 	if err != nil {
 		return err
 	}
