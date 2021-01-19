@@ -111,6 +111,12 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 		return fmt.Errorf("migrate: %w", err)
 	}
 
+	if _, err := db.Exec(`PRAGMA journal_mode = wal;`); err != nil {
+		return fmt.Errorf("set wal mode: %w", err)
+	} else if _, err := db.Exec(`PRAGMA synchronous = NORMAL;`); err != nil {
+		return fmt.Errorf("set synchronous mode: %w", err)
+	}
+
 	// Determine max event time.
 	var startTimeStr string
 	if err := db.QueryRowContext(ctx, `SELECT IFNULL(MAX(created_at), '') FROM events;`).Scan(&startTimeStr); err != nil {
@@ -139,10 +145,6 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 }
 
 func (m *Main) migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.Exec(`PRAGMA journal_mode = wal;`); err != nil {
-		return fmt.Errorf("set wal mode: %w", err)
-	}
-
 	tx, err := db.Begin()
 	if err != nil {
 		return err
