@@ -31,12 +31,6 @@ var (
 		Name:      "write_tx_total",
 		Help:      "Count of write transactions.",
 	})
-
-	readTxTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Namespace: "gha",
-		Name:      "read_tx_total",
-		Help:      "Count of read transactions.",
-	})
 )
 
 // Internal stats.
@@ -66,7 +60,7 @@ func NewMain() *Main {
 func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	fs := flag.NewFlagSet("gha", flag.ContinueOnError)
 	ingestRate := fs.Int("ingest-rate", 1, "")
-	//queryRate := fs.Int("query-rate", 1, "")
+	autocheckpoint := fs.Int("autocheckpoint", 1000, "")
 	fs.Usage = m.Usage
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -105,6 +99,12 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 		return err
 	}
 	defer db.Close()
+
+	// Set autocheckpoint pragma.
+	log.Printf("setting autocheckpoint=%d", *autocheckpoint)
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA wal_autocheckpoint = %d;`, *autocheckpoint)); err != nil {
+		return fmt.Errorf("set autocheckpoint: %w", err)
+	}
 
 	// Setup database schema, if necessary.
 	if err := m.migrate(ctx, db); err != nil {
