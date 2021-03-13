@@ -8,7 +8,7 @@ deploy:
 	rm -rf dist
 
 deploy-litestream:
-	scp -C ../litestream/dist/litestream.deb gha.middlemost.com:
-	ssh gha.middlemost.com "sudo dpkg -i litestream.deb && \
-		sudo systemctl enable litestream && \
+	scp -C ../litestream/dist/litestream-linux-amd64.tar.gz gha.middlemost.com:
+	ssh gha.middlemost.com "tar zxvf litestream-linux-amd64.tar.gz && \
+		sudo mv litestream /usr/local/bin/litestream && \
 		sudo systemctl restart litestream"
