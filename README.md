@@ -11,3 +11,13 @@ long-running testbed for [litestream](https://github.com/benbjohnson/litestream)
 # Start application with an ingest rate of 100 operations per second.
 $ gha -ingest-rate 100
 ```
+
+
+## Deploy
+
+To deploy to fly.io, run:
+
+```sh
+$ flyctl deploy
+```
+

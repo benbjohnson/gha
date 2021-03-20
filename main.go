@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -58,18 +59,37 @@ func NewMain() *Main {
 }
 
 func (m *Main) Run(ctx context.Context, args []string) (err error) {
+	dsn := os.Getenv("GHA_DSN")
+
+	ingestRate := 1
+	if v := os.Getenv("GHA_INGEST_RATE"); v != "" {
+		if ingestRate, err = strconv.Atoi(v); err != nil {
+			return fmt.Errorf("invalid GHA_INGEST_RATE, must be an integer")
+		}
+	}
+
+	autocheckpoint := 1000
+	if v := os.Getenv("GHA_AUTOCHECKPOINT"); v != "" {
+		if autocheckpoint, err = strconv.Atoi(v); err != nil {
+			return fmt.Errorf("invalid GHA_AUTOCHECKPOINT, must be an integer")
+		}
+	}
+
 	fs := flag.NewFlagSet("gha", flag.ContinueOnError)
-	ingestRate := fs.Int("ingest-rate", 1, "")
-	autocheckpoint := fs.Int("autocheckpoint", 1000, "")
+	fs.IntVar(&ingestRate, "ingest-rate", ingestRate, "")
+	fs.IntVar(&autocheckpoint, "autocheckpoint", autocheckpoint, "")
 	fs.Usage = m.Usage
 	if err := fs.Parse(args); err != nil {
 		return err
-	} else if fs.NArg() == 0 {
-		return fmt.Errorf("dsn required")
 	} else if fs.NArg() > 1 {
 		return fmt.Errorf("too many arguments")
 	}
-	dsn := fs.Arg(0)
+
+	if v := fs.Arg(0); v != "" {
+		dsn = v
+	} else if dsn == "" {
+		return fmt.Errorf("dsn required")
+	}
 
 	log.SetFlags(0)
 
@@ -101,8 +121,8 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	defer db.Close()
 
 	// Set autocheckpoint pragma.
-	log.Printf("setting autocheckpoint=%d", *autocheckpoint)
-	if _, err := db.Exec(fmt.Sprintf(`PRAGMA wal_autocheckpoint = %d;`, *autocheckpoint)); err != nil {
+	log.Printf("setting autocheckpoint=%d", autocheckpoint)
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA wal_autocheckpoint = %d;`, autocheckpoint)); err != nil {
 		return fmt.Errorf("set autocheckpoint: %w", err)
 	}
 
@@ -136,7 +156,7 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	defer cancel()
 
 	go m.logger(ctx)
-	go m.ingestor(ctx, db, startTime, *ingestRate)
+	go m.ingestor(ctx, db, startTime, ingestRate)
 	// go m.querier(ctx, db, *queryRate)
 
 	fmt.Println("Metrics available via http://localhost:7070/metrics")
