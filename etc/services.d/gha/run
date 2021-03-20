@@ -1,0 +1,2 @@
+#!/usr/bin/execlineb -P
+/usr/local/bin/gha -ingest-rate 10 /var/lib/gha/db

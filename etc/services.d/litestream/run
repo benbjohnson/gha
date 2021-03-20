@@ -1,0 +1,4 @@
+#!/usr/bin/execlineb -P
+
+with-contenv
+/usr/local/bin/litestream replicate /var/lib/gha/db s3://gha.fly.dev/db
