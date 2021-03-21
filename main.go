@@ -161,6 +161,9 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 
 	fmt.Println("Metrics available via http://localhost:7070/metrics")
 	http.Handle("/metrics", promhttp.Handler())
+	http.Handle("/panic", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		go panic("I AM PANICKING")
+	}))
 	return http.ListenAndServe(":7070", nil)
 }
 

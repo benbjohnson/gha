@@ -1,0 +1,2 @@
+#!/usr/bin/with-contenv bash
+/usr/local/bin/litestream restore -v -if-replica-exists -o /var/lib/gha/db s3://dev.gha.fly.dev/db
