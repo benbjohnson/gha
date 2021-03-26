@@ -1,2 +1,8 @@
 #!/usr/bin/with-contenv bash
-/usr/local/bin/litestream restore -v -if-replica-exists -o /var/lib/gha/db s3://dev.gha.fly.dev/db
+
+if [ -f /data/db ]; then
+	echo "Database already exists, skipping restore"
+else
+	echo "No database found, restoring from replica if exists"
+	/usr/local/bin/litestream restore -v -if-replica-exists -o /data/db s3://dev.gha.fly.dev/db
+fi

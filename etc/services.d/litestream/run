@@ -1,2 +1,2 @@
 #!/usr/bin/with-contenv bash
-/usr/local/bin/litestream replicate /var/lib/gha/db s3://dev.gha.fly.dev/db
+/usr/local/bin/litestream replicate

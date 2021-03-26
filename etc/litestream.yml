@@ -1,0 +1,6 @@
+addr: ":9090"
+
+dbs:
+  - path: /data/db
+    replicas:
+      - url: s3://dev.gha.fly.dev/db

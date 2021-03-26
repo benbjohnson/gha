@@ -159,12 +159,12 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	go m.ingestor(ctx, db, startTime, ingestRate)
 	// go m.querier(ctx, db, *queryRate)
 
-	fmt.Println("Metrics available via http://localhost:7070/metrics")
+	fmt.Println("Metrics available via http://localhost:8080/metrics")
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/panic", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		go panic("I AM PANICKING")
 	}))
-	return http.ListenAndServe(":7070", nil)
+	return http.ListenAndServe(":8080", nil)
 }
 
 func (m *Main) migrate(ctx context.Context, db *sql.DB) error {

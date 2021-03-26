@@ -6,12 +6,12 @@ kill_signal = "SIGINT"
 kill_timeout = 5
 
 [[services]]
-  internal_port = 7070
+  internal_port = 8080
   protocol = "tcp"
 
   [services.concurrency]
-    hard_limit = 25
-    soft_limit = 20
+    hard_limit = 1000000
+    soft_limit = 1000000
 
   [[services.ports]]
     handlers = ["http"]
@@ -27,3 +27,19 @@ kill_timeout = 5
     port = "8080"
     restart_limit = 6
     timeout = "2s"
+
+[[services]]
+  internal_port = 9090
+  protocol = "tcp"
+
+  [services.concurrency]
+    hard_limit = 1000000
+    soft_limit = 1000000
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = "10000"
+
+[mounts]
+source="data"
+destination="/data"

@@ -13,11 +13,20 @@ $ gha -ingest-rate 100
 ```
 
 
-## Deploy
+## Fly.io
+
+### Deploy
 
 To deploy to fly.io, run:
 
 ```sh
-$ flyctl deploy
+$ fly deploy
+```
+
+
+### Volume
+
+```sh
+$ fly volume create data --region iad
 ```
 

@@ -21,12 +21,13 @@ RUN chmod +x /usr/local/bin/litestream
 
 # Copy executable from builder.
 COPY --from=builder /gha /usr/local/bin/gha
-RUN mkdir -p /var/lib/gha
+RUN mkdir -p /data
 EXPOSE 7070
 
 # Copy s6 init & service definitions.
 COPY etc/cont-init.d /etc/cont-init.d
 COPY etc/services.d /etc/services.d
+COPY etc/litestream.yml /etc/litestream.yml
 
 
 #ENV S6_SERVICES_GRACETIME=0
