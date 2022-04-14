@@ -1,38 +1,28 @@
-FROM golang:1.16 as builder
+FROM litestream/litestream:0.4.0-beta.2 AS litestream
+
+FROM golang:1.18 as builder
 COPY . /src/gha
 WORKDIR /src/gha
 RUN --mount=type=cache,target=/root/.cache/go-build \
 	--mount=type=cache,target=/go/pkg \
-	go build -ldflags '-w -extldflags "-static"' -o /gha .
+	go build -ldflags '-s -w -extldflags "-static"' -tags osusergo,netgo,sqlite_omit_load_extension -o /usr/local/bin/gha .
 
 
 FROM alpine
 
-# Install s6-overlay for process supervision.
-ADD https://github.com/just-containers/s6-overlay/releases/download/v2.2.0.3/s6-overlay-amd64-installer /tmp/
-RUN apk upgrade --update && \
-	apk add bash && \
-	chmod +x /tmp/s6-overlay-amd64-installer && \
-	/tmp/s6-overlay-amd64-installer /
+ENV DSN "/data/db"
+ENV REPLICA_URL "s3://gha.litestream.io/db"
 
-# Install litestream.
-ADD https://github.com/benbjohnson/litestream/releases/download/v0.3.4-alpha3/litestream-v0.3.4-alpha3-linux-amd64-static /usr/local/bin/litestream
-RUN chmod +x /usr/local/bin/litestream
+EXPOSE 8080
 
-# Copy executable from builder.
-COPY --from=builder /gha /usr/local/bin/gha
+RUN apk add sqlite bash ca-certificates curl
 RUN mkdir -p /data
-EXPOSE 7070
 
-# Copy s6 init & service definitions.
-COPY etc/cont-init.d /etc/cont-init.d
-COPY etc/services.d /etc/services.d
-COPY etc/litestream.yml /etc/litestream.yml
+ADD etc/litestream.yml /etc/litestream.yml
 
+COPY --from=builder /usr/local/bin/gha /usr/local/bin/gha
+COPY --from=litestream /usr/local/bin/litestream /usr/local/bin/litestream
 
-#ENV S6_SERVICES_GRACETIME=0
-#ENV S6_KILL_GRACETIME=0
-
-# Run the s6 init process on entry.
-ENTRYPOINT [ "/init" ]
-
+CMD \
+  litestream restore -if-db-not-exists -if-replica-exists "${DSN}" && \
+  litestream replicate -exec "gha -dsn $DSN"

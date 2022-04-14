@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -22,32 +21,14 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/rollbar/rollbar-go"
 )
-
-// Metrics
-var (
-	writeTxTotal = promauto.NewCounter(prometheus.CounterOpts{
-		Namespace: "gha",
-		Name:      "write_tx_total",
-		Help:      "Count of write transactions.",
-	})
-)
-
-// Internal stats.
-var stats struct {
-	mu            sync.Mutex
-	writeN        uint64
-	lastCreatedAt time.Time
-}
 
 func main() {
+	log.SetFlags(0)
+
 	m := NewMain()
-	if err := m.Run(context.Background(), os.Args[1:]); err == flag.ErrHelp {
-		os.Exit(1)
-	} else if err != nil {
+	if err := m.Run(context.Background()); err != nil {
 		fmt.Fprintln(os.Stderr, err)
-		rollbar.Error(err)
 		os.Exit(1)
 	}
 }
@@ -58,71 +39,30 @@ func NewMain() *Main {
 	return &Main{}
 }
 
-func (m *Main) Run(ctx context.Context, args []string) (err error) {
-	dsn := os.Getenv("GHA_DSN")
-
-	ingestRate := 1
-	if v := os.Getenv("GHA_INGEST_RATE"); v != "" {
-		if ingestRate, err = strconv.Atoi(v); err != nil {
-			return fmt.Errorf("invalid GHA_INGEST_RATE, must be an integer")
-		}
-	}
-
-	autocheckpoint := 1000
-	if v := os.Getenv("GHA_AUTOCHECKPOINT"); v != "" {
-		if autocheckpoint, err = strconv.Atoi(v); err != nil {
-			return fmt.Errorf("invalid GHA_AUTOCHECKPOINT, must be an integer")
-		}
-	}
-
-	fs := flag.NewFlagSet("gha", flag.ContinueOnError)
-	fs.IntVar(&ingestRate, "ingest-rate", ingestRate, "")
-	fs.IntVar(&autocheckpoint, "autocheckpoint", autocheckpoint, "")
-	fs.Usage = m.Usage
-	if err := fs.Parse(args); err != nil {
-		return err
-	} else if fs.NArg() > 1 {
-		return fmt.Errorf("too many arguments")
-	}
-
-	if v := fs.Arg(0); v != "" {
-		dsn = v
-	} else if dsn == "" {
+func (m *Main) Run(ctx context.Context) (err error) {
+	dsn := flag.String("dsn", "", "datasource name")
+	addr := flag.String("addr", ":8080", "bind address")
+	ingestRate := flag.Int("ingest-rate", 1, "writes/sec")
+	autocheckpoint := flag.Int("autocheckpoint", 1000, "")
+	flag.Parse()
+	if *dsn == "" {
 		return fmt.Errorf("dsn required")
 	}
 
-	log.SetFlags(0)
-
-	// Enable rollbar if token provided.
-	if v := os.Getenv("ROLLBAR_TOKEN"); v != "" {
-		rollbar.SetToken(v)
-		rollbar.SetEnvironment("production")
-		rollbar.SetCodeVersion("v0.1.0")
-		rollbar.SetServerRoot("github.com/benbjohnson/gha")
-		log.Printf("rollbar error tracking enabled")
-		defer func() {
-			if r := recover(); r != nil {
-				rollbar.Critical(r)
-				rollbar.Wait()
-				panic(r)
-			}
-		}()
-	}
-
 	// Connect to database.
-	if err := os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(*dsn), 0700); err != nil {
 		return err
 	}
 
-	db, err := sql.Open("sqlite3", dsn)
+	db, err := sql.Open("sqlite3", *dsn)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 
 	// Set autocheckpoint pragma.
-	log.Printf("setting autocheckpoint=%d", autocheckpoint)
-	if _, err := db.Exec(fmt.Sprintf(`PRAGMA wal_autocheckpoint = %d;`, autocheckpoint)); err != nil {
+	log.Printf("setting autocheckpoint=%d", *autocheckpoint)
+	if _, err := db.Exec(fmt.Sprintf(`PRAGMA wal_autocheckpoint = %d;`, *autocheckpoint)); err != nil {
 		return fmt.Errorf("set autocheckpoint: %w", err)
 	}
 
@@ -156,15 +96,15 @@ func (m *Main) Run(ctx context.Context, args []string) (err error) {
 	defer cancel()
 
 	go m.logger(ctx)
-	go m.ingestor(ctx, db, startTime, ingestRate)
-	// go m.querier(ctx, db, *queryRate)
+	go m.ingestor(ctx, db, startTime, *ingestRate)
 
-	fmt.Println("Metrics available via http://localhost:8080/metrics")
+	log.Printf("listening on %s", *addr)
+
 	http.Handle("/metrics", promhttp.Handler())
 	http.Handle("/panic", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		go panic("I AM PANICKING")
 	}))
-	return http.ListenAndServe(":8080", nil)
+	return http.ListenAndServe(*addr, nil)
 }
 
 func (m *Main) migrate(ctx context.Context, db *sql.DB) error {
@@ -294,25 +234,6 @@ func (m *Main) ingest(ctx context.Context, db *sql.DB, event Event) error {
 	return nil
 }
 
-func (m *Main) Usage() {
-	fmt.Println(`
-GHA is a long-running testbed for litestream.
-
-Usage:
-
-	gha [arguments] DSN
-
-Arguments:
-
-	-ingest-rate NUM
-	    Ingestion rate in operations per second. Defaults to 1.
-
-	-query-rate NUM
-	    Query rate in queries per second. Defaults to 1.
-
-`[1:])
-}
-
 type Event struct {
 	ID        int             `json:"id,string"`
 	Type      string          `json:"type"`
@@ -397,4 +318,20 @@ func processEventStreamAt(db *sql.DB, ch chan Event, t time.Time) error {
 	}
 
 	return nil
+}
+
+// Metrics
+var (
+	writeTxTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "gha",
+		Name:      "write_tx_total",
+		Help:      "Count of write transactions.",
+	})
+)
+
+// Internal stats.
+var stats struct {
+	mu            sync.Mutex
+	writeN        uint64
+	lastCreatedAt time.Time
 }
